@@ -6,13 +6,17 @@ const path = require('path');
 // Store the current dictionary
 let currentDictionary = null;
 let dictionaryLanguage = 'es'; // Default language
+// Declare updateDecorations at the module level
+let updateDecorations = () => {}; // Initially a no-op function
+// Toggle for showing translations inline
+let showTranslations = false;
 
 /**
  * Activate the extension
  * @param {vscode.ExtensionContext} context
  */
 function activate(context) {
-  console.log('i8n Dictionary Preview extension is now active');
+  console.log('Extensión Vista Previa i8n activa');
 
   // Register the command to select a dictionary file
   let selectDictionaryCommand = vscode.commands.registerCommand(
@@ -21,6 +25,27 @@ function activate(context) {
       await selectDictionaryFile();
     }
   );
+
+  // Register command to toggle translation view
+  let toggleTranslationsCommand = vscode.commands.registerCommand(
+    'i8nPreview.toggleTranslations',
+    () => {
+      showTranslations = !showTranslations;
+      updateStatusBar();
+      updateDecorations();
+      vscode.window.showInformationMessage(
+        showTranslations 
+          ? 'Mostrando traducciones en el editor' 
+          : 'Mostrando claves i8n originales'
+      );
+    }
+  );
+  
+  // Register icon in title bar
+  const toggleCommandOptions = {
+    dark: vscode.Uri.file(path.join(context.extensionPath, 'resources', 'dark', 'translate.svg')),
+    light: vscode.Uri.file(path.join(context.extensionPath, 'resources', 'light', 'translate.svg'))
+  };
 
   // Create decoration type for i8n strings
   const i8nDecorationType = vscode.window.createTextEditorDecorationType({
@@ -37,13 +62,26 @@ function activate(context) {
     borderRadius: '3px'
   });
 
+  // Create decoration type for replacement text
+  const replacementDecorationType = vscode.window.createTextEditorDecorationType({
+    before: {
+      backgroundColor: 'rgba(150, 200, 255, 0.1)',
+      border: '1px solid rgb(100, 150, 255)',
+      borderRadius: '3px',
+      contentText: '',
+      margin: '0 0 0 0',
+      width: 'auto'
+    },
+    textDecoration: 'none; display: none'
+  });
+
   // Register the hover provider for i8n strings
   const hoverProvider = vscode.languages.registerHoverProvider(
     ['javascript', 'javascriptreact', 'typescript', 'typescriptreact'],
     {
       provideHover(document, position, token) {
         if (!currentDictionary) {
-          return new vscode.Hover('No dictionary selected. Use the "i8n: Select Dictionary" command.');
+          return new vscode.Hover('No hay diccionario seleccionado. Usa el comando "i8n: Seleccionar Diccionario".');
         }
 
         const range = document.getWordRangeAtPosition(position);
@@ -59,11 +97,11 @@ function activate(context) {
           
           if (position.character >= start && position.character <= end) {
             const key = match[1];
-            const translation = currentDictionary[key] || 'MISSING TRANSLATION';
+            const translation = currentDictionary[key] || 'TRADUCCIÓN FALTANTE';
             
             const markdown = new vscode.MarkdownString();
             markdown.appendCodeblock(`${key} → "${translation}"`, 'javascript');
-            markdown.appendMarkdown(`\n\nDictionary: ${dictionaryLanguage}`);
+            markdown.appendMarkdown(`\n\nDiccionario: ${dictionaryLanguage}`);
             
             return new vscode.Hover(markdown);
           }
@@ -75,7 +113,8 @@ function activate(context) {
   // Update decorations on editor change
   let activeEditor = vscode.window.activeTextEditor;
   
-  function updateDecorations() {
+  // Redefine the updateDecorations function
+  updateDecorations = function() {
     if (!activeEditor || !currentDictionary) {
       return;
     }
@@ -85,35 +124,63 @@ function activate(context) {
     
     const i8nDecorations = [];
     const missingI8nDecorations = [];
+    const replacementDecorations = [];
     
     let match;
     while ((match = i8nRegex.exec(text)) !== null) {
       const key = match[1];
       const startPos = activeEditor.document.positionAt(match.index);
       const endPos = activeEditor.document.positionAt(match.index + match[0].length);
+      const range = new vscode.Range(startPos, endPos);
       
-      const decoration = {
-        range: new vscode.Range(startPos, endPos),
-        hoverMessage: `${key} → "${currentDictionary[key] || 'MISSING TRANSLATION'}"`,
-        renderOptions: {
-          after: {
-            contentText: ` → "${currentDictionary[key] || 'MISSING'}"`,
-            color: currentDictionary[key] ? 'rgba(0, 100, 255, 0.6)' : 'rgba(255, 50, 50, 0.8)',
-            fontStyle: 'italic'
+      const hasTranslation = !!currentDictionary[key];
+      const translation = currentDictionary[key] || 'FALTA TRADUCCIÓN';
+      
+      if (showTranslations) {
+        // When showing translations, replace the entire i8n call with just the translation
+        replacementDecorations.push({
+          range: range,
+          renderOptions: {
+            before: {
+              contentText: `"${translation}"`,
+              backgroundColor: hasTranslation ? 'rgba(150, 200, 255, 0.1)' : 'rgba(255, 100, 100, 0.1)',
+              border: hasTranslation ? '1px solid rgb(100, 150, 255)' : '1px solid rgb(255, 100, 100)',
+            }
           }
-        }
-      };
-      
-      if (currentDictionary[key]) {
-        i8nDecorations.push(decoration);
+        });
       } else {
-        missingI8nDecorations.push(decoration);
+        // In normal mode, show the i8n call with the translation alongside
+        const decoration = {
+          range: range,
+          hoverMessage: `${key} → "${translation}"`,
+          renderOptions: {
+            after: {
+              contentText: ` → "${translation}"`,
+              color: hasTranslation ? 'rgba(0, 100, 255, 0.6)' : 'rgba(255, 50, 50, 0.8)',
+              fontStyle: 'italic'
+            }
+          }
+        };
+        
+        if (hasTranslation) {
+          i8nDecorations.push(decoration);
+        } else {
+          missingI8nDecorations.push(decoration);
+        }
       }
     }
     
-    activeEditor.setDecorations(i8nDecorationType, i8nDecorations);
-    activeEditor.setDecorations(missingI8nDecorationType, missingI8nDecorations);
-  }
+    // Apply the appropriate decorations based on the current mode
+    if (showTranslations) {
+      activeEditor.setDecorations(replacementDecorationType, replacementDecorations);
+      activeEditor.setDecorations(i8nDecorationType, []);
+      activeEditor.setDecorations(missingI8nDecorationType, []);
+    } else {
+      activeEditor.setDecorations(replacementDecorationType, []);
+      activeEditor.setDecorations(i8nDecorationType, i8nDecorations);
+      activeEditor.setDecorations(missingI8nDecorationType, missingI8nDecorations);
+    }
+  };
 
   // Watch for changes
   vscode.window.onDidChangeActiveTextEditor(editor => {
@@ -135,30 +202,46 @@ function activate(context) {
   }
 
   // Register status bar item to show current dictionary
-  const statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  statusBarItem.command = 'i8nPreview.selectDictionary';
+  const dictionaryStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  dictionaryStatusBarItem.command = 'i8nPreview.selectDictionary';
+  
+  // Register status bar item for toggling translations
+  const toggleStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 101);
+  toggleStatusBarItem.command = 'i8nPreview.toggleTranslations';
   
   function updateStatusBar() {
     if (currentDictionary) {
-      statusBarItem.text = `$(globe) i8n: ${dictionaryLanguage}`;
-      statusBarItem.tooltip = 'Click to change dictionary';
-      statusBarItem.show();
+      dictionaryStatusBarItem.text = `$(globe) i8n: ${dictionaryLanguage}`;
+      dictionaryStatusBarItem.tooltip = 'Clic para cambiar diccionario';
+      dictionaryStatusBarItem.show();
+      
+      toggleStatusBarItem.text = showTranslations ? 
+        `$(eye) Mostrando Traducciones` : 
+        `$(code) Mostrando Claves`;
+      toggleStatusBarItem.tooltip = showTranslations ? 
+        'Clic para mostrar claves i8n originales' : 
+        'Clic para mostrar traducciones en el editor';
+      toggleStatusBarItem.show();
     } else {
-      statusBarItem.text = '$(warning) i8n: No Dictionary';
-      statusBarItem.tooltip = 'Click to select a dictionary';
-      statusBarItem.show();
+      dictionaryStatusBarItem.text = '$(warning) i8n: Sin Diccionario';
+      dictionaryStatusBarItem.tooltip = 'Clic para seleccionar un diccionario';
+      dictionaryStatusBarItem.show();
+      toggleStatusBarItem.hide();
     }
   }
 
   updateStatusBar();
 
-  // Add all items to subscriptions
+  // Add updateDecorations reference to outer scope
   context.subscriptions.push(
     selectDictionaryCommand,
+    toggleTranslationsCommand,
     hoverProvider,
     i8nDecorationType,
     missingI8nDecorationType,
-    statusBarItem
+    replacementDecorationType,
+    dictionaryStatusBarItem,
+    toggleStatusBarItem
   );
 
   // Try to load dictionary automatically on startup
@@ -224,7 +307,7 @@ async function selectDictionaryFile() {
   const dictionaryFiles = await findDictionaryFiles();
   
   if (dictionaryFiles.length === 0) {
-    vscode.window.showErrorMessage('No dictionary files found in the workspace.');
+    vscode.window.showErrorMessage('No se encontraron archivos de diccionario en el espacio de trabajo.');
     return;
   }
   
@@ -232,25 +315,23 @@ async function selectDictionaryFile() {
     dictionaryFiles.map(file => ({
       label: file.language.toUpperCase(),
       description: file.path,
-      detail: `Load ${file.language} dictionary`,
+      detail: `Cargar diccionario ${file.language}`,
       path: file.path,
       language: file.language
     })),
     {
-      placeHolder: 'Select a dictionary file to use for previewing i8n strings',
-      title: 'i8n Dictionary Selection'
+      placeHolder: 'Selecciona un archivo de diccionario para previsualizar cadenas i8n',
+      title: 'Selección de Diccionario i8n'
     }
   );
   
   if (selected) {
     loadDictionary(selected.path);
     dictionaryLanguage = selected.language;
-    vscode.window.showInformationMessage(`Loaded ${selected.language} dictionary.`);
+    vscode.window.showInformationMessage(`Diccionario cargado: "${selected.language}".`);
     
     // Refresh decorations
-    if (vscode.window.activeTextEditor) {
-      updateDecorations();
-    }
+    updateDecorations();
   }
 }
 
@@ -260,29 +341,71 @@ async function selectDictionaryFile() {
  */
 function loadDictionary(filePath) {
   try {
-    // Read the file content
+    // Leer el contenido completo del archivo
     const fileContent = fs.readFileSync(filePath, 'utf8');
     
-    // Extract the dictionary object using regex
-    const dictionaryMatch = fileContent.match(/export\s+default\s+({[\s\S]*?})/m);
+    // Log del principio del archivo para ayudar con la depuración
+    console.log(`Archivo cargado: ${filePath}`);
+    console.log(`Tamaño del archivo: ${fileContent.length} bytes`);
     
-    if (dictionaryMatch && dictionaryMatch[1]) {
-      // Convert the dictionary string to an object
-      const dictionaryStr = dictionaryMatch[1]
-        .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?:/g, '"$2":') // Fix keys
-        .replace(/'/g, '"'); // Replace single quotes with double quotes
+    // Enfoque más directo: usar require() para cargar el módulo JavaScript directamente
+    // Esto evita tener que analizar el JSON manualmente
+    try {
+      // Crear un archivo temporal con el contenido
+      const tempFile = path.join(path.dirname(filePath), `._temp_${Date.now()}.js`);
+      fs.writeFileSync(tempFile, fileContent);
       
+      // Eliminar cualquier caché previa
+      delete require.cache[require.resolve(tempFile)];
+      
+      // Cargar el módulo
+      const dictionaryModule = require(tempFile);
+      // El diccionario puede ser el módulo mismo o una propiedad de este
+      currentDictionary = dictionaryModule.default || dictionaryModule;
+      
+      // Limpiar
+      setTimeout(() => {
+        try {
+          fs.unlinkSync(tempFile);
+        } catch (e) {
+          console.error(`Error al eliminar archivo temporal: ${e.message}`);
+        }
+      }, 1000);
+      
+      console.log(`Diccionario cargado correctamente con ${Object.keys(currentDictionary).length} claves`);
+      return true;
+    } catch (requireError) {
+      console.error(`Error usando require(): ${requireError.message}`);
+      
+      // Plan B: evaluar el archivo en un contexto controlado
       try {
-        currentDictionary = JSON.parse(dictionaryStr);
-        return true;
-      } catch (jsonError) {
-        vscode.window.showErrorMessage(`Error parsing dictionary: ${jsonError.message}`);
+        // Extraer solo el objeto del diccionario
+        const dictionaryMatch = fileContent.match(/(const\s+\w+\s*=\s*)({[\s\S]*?})(;\s*(export|module))/m);
+        
+        if (dictionaryMatch && dictionaryMatch[2]) {
+          const dictionaryStr = dictionaryMatch[2];
+          console.log(`Objeto extraído (primeros 100 caracteres): ${dictionaryStr.substring(0, 100)}...`);
+          
+          // Evaluar el objeto en un contexto seguro
+          const safeEval = (code) => {
+            return Function('"use strict"; return (' + code + ')')();
+          };
+          
+          currentDictionary = safeEval(dictionaryStr);
+          console.log(`Diccionario evaluado correctamente con ${Object.keys(currentDictionary).length} claves`);
+          return true;
+        } else {
+          console.error('No se pudo extraer el objeto del diccionario');
+          vscode.window.showErrorMessage('No se pudo extraer el objeto del diccionario. El formato no es compatible.');
+        }
+      } catch (evalError) {
+        console.error(`Error en evaluación: ${evalError.message}`);
+        vscode.window.showErrorMessage(`Error al evaluar el diccionario: ${evalError.message}`);
       }
-    } else {
-      vscode.window.showErrorMessage('Could not extract dictionary from the file.');
     }
   } catch (error) {
-    vscode.window.showErrorMessage(`Error loading dictionary: ${error.message}`);
+    console.error(`Error al leer archivo: ${error.message}`);
+    vscode.window.showErrorMessage(`Error al leer archivo de diccionario: ${error.message}`);
   }
   
   return false;
