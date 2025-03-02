@@ -1,4 +1,4 @@
-// extension.js
+// extension.js - Añadir sidebar con diccionario
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
@@ -10,6 +10,8 @@ let dictionaryLanguage = 'es'; // Default language
 let updateDecorations = () => {}; // Initially a no-op function
 // Toggle for showing translations inline
 let showTranslations = false;
+// Dictionary view provider
+let dictionaryViewProvider = null;
 
 /**
  * Activate the extension
@@ -40,6 +42,82 @@ function activate(context) {
       );
     }
   );
+  
+  // Register command to toggle dictionary sidebar
+  let toggleDictionarySidebarCommand = vscode.commands.registerCommand(
+    'i8nPreview.toggleDictionarySidebar',
+    () => {
+      // Actualizar las claves del archivo actual
+      dictionaryViewProvider.updateKeysInCurrentFile();
+      dictionaryViewProvider.show();
+    }
+  );
+
+  // Registrar comando para hacer clic en los elementos especiales
+  let handleTreeItemClickCommand = vscode.commands.registerCommand(
+    'i8nPreview.handleTreeItemClick',
+    (item) => {
+      return dictionaryViewProvider.handleItemClick(item);
+    }
+  );
+  
+  // Register command for search button in the dictionary view
+  let showSearchCommand = vscode.commands.registerCommand(
+    'i8nPreview.showSearch',
+    () => {
+      dictionaryViewProvider.showSearchBox();
+    }
+  );
+  
+  // Register command to search for key in editor
+  let searchKeyInEditorCommand = vscode.commands.registerCommand(
+    'i8nPreview.searchKeyInEditor',
+    (key) => {
+      // Si es un elemento especial, manejarlo de forma diferente
+      if (typeof key === 'object' && key.key) {
+        if (dictionaryViewProvider.handleItemClick(key)) {
+          return;
+        }
+        key = key.key;
+      }
+      
+      const editor = vscode.window.activeTextEditor;
+      if (editor) {
+        // Crear una expresión regular para buscar el key
+        const searchRegex = new RegExp(`__\\(['"]${key}['"]\\)`, 'g');
+        
+        // Búsqueda manual
+        const text = editor.document.getText();
+        const matches = [];
+        let match;
+        
+        while ((match = searchRegex.exec(text)) !== null) {
+          const startPosition = editor.document.positionAt(match.index);
+          const endPosition = editor.document.positionAt(match.index + match[0].length);
+          matches.push(new vscode.Range(startPosition, endPosition));
+        }
+        
+        if (matches.length > 0) {
+          // Seleccionar la primera ocurrencia
+          editor.selection = new vscode.Selection(matches[0].start, matches[0].end);
+          editor.revealRange(matches[0], vscode.TextEditorRevealType.InCenter);
+          
+          // Abrir el widget de búsqueda con la clave
+          vscode.commands.executeCommand('editor.actions.findWithArgs', { 
+            searchString: key,
+            isRegex: false,
+            matchCase: true,
+            matchWholeWord: false
+          });
+        } else {
+          vscode.window.showInformationMessage(`No se encontraron ocurrencias de "${key}" en este archivo.`);
+        }
+      }
+    }
+  );
+  
+  
+  
   
   // Register icon in title bar
   const toggleCommandOptions = {
@@ -182,17 +260,174 @@ function activate(context) {
     }
   };
 
+  // Dictionary sidebar view provider
+  
+  class DictionaryViewProvider {
+    constructor(context) {
+      this.view = null;
+      this._onDidChangeTreeData = new vscode.EventEmitter();
+      this.onDidChangeTreeData = this._onDidChangeTreeData.event;
+      this.context = context;
+      this.searchValue = '';
+      this.keysInCurrentFile = new Set();
+      // Siempre mostrar solo claves del archivo actual
+    }
+  
+    show() {
+      vscode.commands.executeCommand('workbench.view.explorer').then(() => {
+        setTimeout(() => {
+          vscode.commands.executeCommand('workbench.view.extension.i8nPreviewDictionary');
+          this.showSearchBox();
+        }, 100);
+      });
+    }
+  
+    showSearchBox() {
+      // Crear un input box para búsqueda
+      vscode.window.showInputBox({
+        placeHolder: 'Buscar en el diccionario...',
+        prompt: 'Ingresa texto para filtrar las claves y traducciones',
+        value: this.searchValue
+      }).then(value => {
+        if (value !== undefined) { // Si no se canceló
+          this.searchValue = value;
+          this.refresh();
+        }
+      });
+    }
+  
+    // Actualizar las claves en el archivo actual
+    updateKeysInCurrentFile() {
+      this.keysInCurrentFile.clear();
+      
+      const editor = vscode.window.activeTextEditor;
+      if (editor && currentDictionary) {
+        const text = editor.document.getText();
+        const i8nRegex = /__\(['"]([^'"]+)['"]\)/g;
+        
+        let match;
+        while ((match = i8nRegex.exec(text)) !== null) {
+          const key = match[1];
+          this.keysInCurrentFile.add(key);
+        }
+      }
+      this.refresh();
+    }
+  
+    refresh() {
+      this._onDidChangeTreeData.fire();
+    }
+  
+    getTreeItem(element) {
+      const hasTranslation = element.value !== 'TRADUCCIÓN FALTANTE';
+      
+      // Crear elemento con icono según si tiene traducción
+      const treeItem = new vscode.TreeItem(
+        `${element.key}: ${element.value}`,
+        vscode.TreeItemCollapsibleState.None
+      );
+      
+      treeItem.tooltip = `${element.key} → "${element.value}"`;
+      treeItem.command = {
+        command: 'i8nPreview.searchKeyInEditor',
+        title: 'Buscar clave en el editor',
+        arguments: [element.key]
+      };
+      
+      // Añadir icono según el estado
+      treeItem.iconPath = hasTranslation 
+        ? new vscode.ThemeIcon('check')
+        : new vscode.ThemeIcon('warning');
+      
+      // Si está en el archivo actual, destacarlo
+      if (this.keysInCurrentFile.has(element.key)) {
+        treeItem.contextValue = 'dictionaryEntryInFile';
+      } else {
+        treeItem.contextValue = 'dictionaryEntry';
+      }
+      
+      return treeItem;
+    }
+  
+    getChildren(element) {
+      if (!currentDictionary) {
+        return [{ 
+          key: 'NO_DICTIONARY', 
+          value: 'No hay diccionario seleccionado. Usa el comando "i8n: Seleccionar Diccionario".' 
+        }];
+      }
+  
+      if (element) {
+        return [];
+      }
+  
+      // Crear un item de búsqueda al principio de la lista
+      const items = [];
+      
+      // Añadir un elemento especial para el buscador
+      items.push({
+        key: '🔍 BUSCAR',
+        value: this.searchValue || 'Clic para buscar',
+        isSearchButton: true
+      });
+      
+      // Filtrar las entradas - mostrar SÓLO las claves del archivo actual
+      const filteredEntries = Object.entries(currentDictionary)
+        .filter(([key, value]) => {
+          // Solo mostrar claves del archivo actual
+          if (!this.keysInCurrentFile.has(key)) {
+            return false;
+          }
+          
+          // Filtrar por término de búsqueda
+          if (this.searchValue === '') {
+            return true;
+          }
+          
+          const searchLower = this.searchValue.toLowerCase();
+          return key.toLowerCase().includes(searchLower) ||
+                 (value && value.toString().toLowerCase().includes(searchLower));
+        })
+        .map(([key, value]) => ({ 
+          key, 
+          value: value || 'TRADUCCIÓN FALTANTE' 
+        }));
+  
+      return [...items, ...filteredEntries];
+    }
+  
+    // Manejar clics en los elementos especiales
+    handleItemClick(item) {
+      if (item.isSearchButton) {
+        this.showSearchBox();
+        return true;
+      }
+      
+      return false;
+    }
+  }
+  
+
+  // Create and register the Dictionary view provider
+  dictionaryViewProvider = new DictionaryViewProvider(context);
+  const dictionaryTreeView = vscode.window.createTreeView('i8nPreviewDictionary', {
+    treeDataProvider: dictionaryViewProvider,
+    showCollapseAll: false
+  });
+
   // Watch for changes
   vscode.window.onDidChangeActiveTextEditor(editor => {
     activeEditor = editor;
     if (editor) {
       updateDecorations();
+      dictionaryViewProvider.updateKeysInCurrentFile();
     }
   }, null, context.subscriptions);
 
   vscode.workspace.onDidChangeTextDocument(event => {
     if (activeEditor && event.document === activeEditor.document) {
       updateDecorations();
+      dictionaryViewProvider.updateKeysInCurrentFile();
     }
   }, null, context.subscriptions);
 
@@ -209,6 +444,13 @@ function activate(context) {
   const toggleStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 101);
   toggleStatusBarItem.command = 'i8nPreview.toggleTranslations';
   
+  // Register status bar item for toggling dictionary sidebar
+  const toggleDictionarySidebarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 102);
+  toggleDictionarySidebarItem.text = '$(eye) Diccionario';
+  toggleDictionarySidebarItem.tooltip = 'Mostrar panel de diccionario';
+  toggleDictionarySidebarItem.command = 'i8nPreview.toggleDictionarySidebar';
+  toggleDictionarySidebarItem.show();
+  
   function updateStatusBar() {
     if (currentDictionary) {
       dictionaryStatusBarItem.text = `$(globe) i8n: ${dictionaryLanguage}`;
@@ -222,11 +464,17 @@ function activate(context) {
         'Clic para mostrar claves i8n originales' : 
         'Clic para mostrar traducciones en el editor';
       toggleStatusBarItem.show();
+      
+      toggleDictionarySidebarItem.show();
+      
+      // Refresh dictionary view when dictionary changes
+      dictionaryViewProvider.refresh();
     } else {
       dictionaryStatusBarItem.text = '$(warning) i8n: Sin Diccionario';
       dictionaryStatusBarItem.tooltip = 'Clic para seleccionar un diccionario';
       dictionaryStatusBarItem.show();
       toggleStatusBarItem.hide();
+      toggleDictionarySidebarItem.hide();
     }
   }
 
@@ -236,12 +484,18 @@ function activate(context) {
   context.subscriptions.push(
     selectDictionaryCommand,
     toggleTranslationsCommand,
+    toggleDictionarySidebarCommand,
+    searchKeyInEditorCommand,
+    handleTreeItemClickCommand,
+    showSearchCommand,
     hoverProvider,
     i8nDecorationType,
     missingI8nDecorationType,
     replacementDecorationType,
     dictionaryStatusBarItem,
-    toggleStatusBarItem
+    toggleStatusBarItem,
+    toggleDictionarySidebarItem,
+    dictionaryTreeView
   );
 
   // Try to load dictionary automatically on startup

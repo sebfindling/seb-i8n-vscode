@@ -32,6 +32,41 @@
           "light": "./resources/light/translate.svg",
           "dark": "./resources/dark/translate.svg"
         }
+      },
+      {
+        "command": "i8nPreview.toggleDictionarySidebar",
+        "title": "i8n: Mostrar Panel de Diccionario",
+        "icon": {
+          "light": "./resources/light/eye.svg",
+          "dark": "./resources/dark/eye.svg"
+        }
+      },
+      {
+        "command": "i8nPreview.searchKeyInEditor",
+        "title": "i8n: Buscar Clave en Editor"
+      },
+      {
+        "command": "i8nPreview.handleTreeItemClick",
+        "title": "i8n: Manejar Clic en Item"
+      },
+      {
+        "command": "i8nPreview.showSearch",
+        "title": "i8n: Mostrar Búsqueda",
+        "icon": "$(search)"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "i8nPreviewDictionary",
+          "name": "Diccionario i8n"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "i8nPreviewDictionary",
+        "contents": "No hay diccionario seleccionado.\n[Seleccionar Diccionario](command:i8nPreview.selectDictionary)"
       }
     ],
     "menus": {
@@ -40,6 +75,18 @@
           "command": "i8nPreview.toggleTranslations",
           "group": "navigation",
           "when": "editorLangId =~ /(javascript|typescript|javascriptreact|typescriptreact)/"
+        },
+        {
+          "command": "i8nPreview.toggleDictionarySidebar",
+          "group": "navigation",
+          "when": "editorLangId =~ /(javascript|typescript|javascriptreact|typescriptreact)/"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "i8nPreview.showSearch",
+          "when": "view == i8nPreviewDictionary",
+          "group": "navigation"
         }
       ]
     }
