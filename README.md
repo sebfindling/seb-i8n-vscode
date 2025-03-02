@@ -18,7 +18,7 @@ Alternar vista:
 
 Panel de keys con buscador:
 
-![image](https://github.com/user-attachments/assets/1785baf8-66c2-4a5e-a078-c9fbc3b5cd6d)
+![image](https://github.com/user-attachments/assets/6cd6f40d-9ab3-4913-b5c9-e1e9350110d5)
 
 
 
