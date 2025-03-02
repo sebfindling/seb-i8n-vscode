@@ -1,10 +1,11 @@
 {
-  "name": "vscode-i8n-preview",
+  "name": "i8n-preview",
+  "repository": "https://github.com/sebfindling/seb-i8n-vscode",
   "displayName": "Vista Previa i8n",
   "author": "Sebastian Findling",
   "publisher": "sebfindling",
   "description": "Extensión para previsualizar cadenas i8n con traducciones",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "engines": {
     "vscode": "^1.60.0"
   },
