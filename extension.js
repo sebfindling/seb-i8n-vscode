@@ -351,6 +351,7 @@ function activate(context) {
   
     getChildren(element) {
       if (!currentDictionary) {
+        return
         return [{ 
           key: 'NO_DICTIONARY', 
           value: 'No hay diccionario seleccionado. Usa el comando "i8n: Seleccionar Diccionario".' 
@@ -499,7 +500,7 @@ function activate(context) {
   );
 
   // Try to load dictionary automatically on startup
-  findAndLoadDictionary();
+  // findAndLoadDictionary();
 }
 
 /**
