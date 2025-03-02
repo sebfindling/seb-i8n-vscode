@@ -5,7 +5,7 @@
   "author": "Sebastian Findling",
   "publisher": "sebfindling",
   "description": "Extensión para previsualizar cadenas i8n con traducciones",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "engines": {
     "vscode": "^1.60.0"
   },
