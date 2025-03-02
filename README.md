@@ -8,6 +8,14 @@ Incluye múltiples funcionalidades súper útiles:
 * Cambiar de diccionario de traducciones
 
 #### Resultado
+![image](https://github.com/user-attachments/assets/e541dde1-1f7e-4abe-8443-91f821fc6f97)
+
+Alternar vista:
+
+![image](https://github.com/user-attachments/assets/9d53b81f-c2d4-49cd-af9f-254a0e18bb43)
+![image](https://github.com/user-attachments/assets/79b2cc19-1ceb-44bb-a2ba-c509b861c139)
+
+
 
 ## Descargar
 [Descargar la versión más reciente de la página de Releases](https://github.com/sebfindling/seb-i8n-vscode/releases)
