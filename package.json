@@ -34,14 +34,6 @@
         }
       },
       {
-        "command": "i8nPreview.toggleDictionarySidebar",
-        "title": "i8n: Mostrar Panel de Diccionario",
-        "icon": {
-          "light": "./resources/light/eye.svg",
-          "dark": "./resources/dark/eye.svg"
-        }
-      },
-      {
         "command": "i8nPreview.searchKeyInEditor",
         "title": "i8n: Buscar Clave en Editor"
       },

@@ -9,7 +9,7 @@ let dictionaryLanguage = 'es'; // Default language
 // Declare updateDecorations at the module level
 let updateDecorations = () => { }; // Initially a no-op function
 // Toggle for showing translations inline
-let showTranslations = false;
+let showTranslations = true;
 // Dictionary view provider
 let dictionaryViewProvider = null;
 
@@ -166,6 +166,7 @@ function activate(context) {
     {
       provideHover(document, position, token) {
         if (!currentDictionary) {
+          return
           return new vscode.Hover('No hay diccionario seleccionado. Usa el comando "i8n: Seleccionar Diccionario".');
         }
 
@@ -373,11 +374,13 @@ function activate(context) {
       const items = [];
 
       // Añadir un elemento especial para el buscador
-      items.push({
-        key: '🔍 BUSCAR',
-        value: this.searchValue || 'Clic para buscar',
-        isSearchButton: true
-      });
+      if (this.searchValue) {
+        items.push({
+          key: '🔍 BUSCANDO',
+          value: this.searchValue,// || 'Clic para buscar',
+          isSearchButton: true
+        });
+      }
 
       // Filtrar las entradas - mostrar SÓLO las claves del archivo actual
       const filteredEntries = Object.entries(currentDictionary)
@@ -628,19 +631,19 @@ function loadDictionary(filePath) {
     // Definir la función de eliminación una sola vez
     const deleteTemporaryFile = (file, attempts = 1, maxAttempts = 5) => {
       if (!file) return;
-      
+
       try {
         fs.unlinkSync(file);
         console.log(`Archivo temporal eliminado: ${file}`);
       } catch (e) {
         console.error(`Intento ${attempts}: Error al eliminar archivo temporal: ${e.message}`);
-        
+
         // Si aún no hemos alcanzado el número máximo de intentos, reintentar
         if (attempts < maxAttempts) {
           // Incrementar el tiempo de espera exponencialmente (1s, 2s, 4s, 8s, etc.)
           const nextTimeout = Math.pow(2, attempts) * 1000;
-          console.log(`Reintentando eliminar en ${nextTimeout/1000} segundos...`);
-          
+          console.log(`Reintentando eliminar en ${nextTimeout / 1000} segundos...`);
+
           setTimeout(() => {
             deleteTemporaryFile(file, attempts + 1, maxAttempts);
           }, nextTimeout);
@@ -694,7 +697,7 @@ function loadDictionary(filePath) {
             deleteTemporaryFile(tempFile);
           }, 2000);
         }
-        
+
         // Extraer solo el objeto del diccionario
         const dictionaryMatch = fileContent.match(/(const\s+\w+\s*=\s*)({[\s\S]*?})(;\s*(export|module))/m);
 
