@@ -172,7 +172,7 @@ function activate(context) {
                   const lineNum = findKeyLineInFile(dictPath, key);
                   const args = encodeURIComponent(JSON.stringify([dictPath, lineNum]));
                   markdown.appendMarkdown(
-                    `${langLabel}: "${translation}" &nbsp;[$(edit)](command:i8nPreview.openDictionaryAtKey?${args} "Edit in ${lang}")\n\n`
+                    `${langLabel}: ["${translation}"](command:i8nPreview.openDictionaryAtKey?${args} "Edit in ${lang}")\n\n`
                   );
                 } else {
                   markdown.appendMarkdown(`${langLabel}: *(missing)*\n\n`);
