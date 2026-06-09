@@ -11,10 +11,10 @@ Incluye múltiples funcionalidades súper útiles:
 #### Resultado
 ![image](https://github.com/user-attachments/assets/e541dde1-1f7e-4abe-8443-91f821fc6f97)
 
-Alternar vista:
+Editar desde Tooltip:
 
-![image](https://github.com/user-attachments/assets/9d53b81f-c2d4-49cd-af9f-254a0e18bb43)
-![image](https://github.com/user-attachments/assets/79b2cc19-1ceb-44bb-a2ba-c509b861c139)
+<img width="269" height="121" alt="image" src="https://github.com/user-attachments/assets/3f9f3a35-840c-46cb-827e-8159d8120bb5" />
+
 
 Panel de keys con buscador:
 
