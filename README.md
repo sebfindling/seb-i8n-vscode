@@ -2,10 +2,8 @@
 ### Herramienta para ver las traducciones de mi librería i8n dentro del editor
 
 Incluye múltiples funcionalidades súper útiles:
-* Ver traducciones dentro del editor como información extra
 * Ver traducciones dentro del editor en reemplazo del string original
-* Ver traducciones dentro del editor en un hover
-* Cambiar de diccionario de traducciones
+* Cambiar textos directamente desde el Tooltip o con "Ir a definición"
 * Panel lateral con las keys usadas en el archivo actual
 
 #### Resultado
