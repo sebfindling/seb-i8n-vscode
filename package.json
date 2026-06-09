@@ -26,12 +26,8 @@
         "title": "i8n: Seleccionar Diccionario"
       },
       {
-        "command": "i8nPreview.toggleTranslations",
-        "title": "i8n: Alternar Vista de Traducciones",
-        "icon": {
-          "light": "./resources/light/translate.svg",
-          "dark": "./resources/dark/translate.svg"
-        }
+        "command": "i8nPreview.openDictionaryAtKey",
+        "title": "i8n: Abrir Diccionario en Clave"
       },
       {
         "command": "i8nPreview.searchKeyInEditor",
@@ -71,11 +67,6 @@
     ],
     "menus": {
       "editor/title": [
-        {
-          "command": "i8nPreview.toggleTranslations",
-          "group": "navigation",
-          "when": "editorLangId =~ /(javascript|typescript|javascriptreact|typescriptreact)/"
-        },
         {
           "command": "i8nPreview.toggleDictionarySidebar",
           "group": "navigation",

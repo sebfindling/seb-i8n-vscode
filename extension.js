@@ -5,11 +5,12 @@ const path = require('path');
 
 // Store the current dictionary
 let currentDictionary = null;
+let currentDictionaryPath = null;
 let dictionaryLanguage = 'es'; // Default language
+// All discovered dictionaries: { language: { path, data } }
+let allDictionaries = {};
 // Declare updateDecorations at the module level
 let updateDecorations = () => { }; // Initially a no-op function
-// Toggle for showing translations inline
-let showTranslations = true;
 // Dictionary view provider
 let dictionaryViewProvider = null;
 
@@ -25,28 +26,6 @@ function activate(context) {
     'i8nPreview.selectDictionary',
     async () => {
       await selectDictionaryFile();
-    }
-  );
-
-  // Register command to toggle translation view
-  let toggleTranslationsCommand = vscode.commands.registerCommand(
-    'i8nPreview.toggleTranslations',
-    () => {
-      showTranslations = !showTranslations;
-      updateStatusBar();
-      updateDecorations();
-
-      // Actualizar las claves en el archivo actual y refrescar la vista del diccionario
-      if (dictionaryViewProvider) {
-        dictionaryViewProvider.updateKeysInCurrentFile();
-        dictionaryViewProvider.refresh();
-      }
-
-      vscode.window.showInformationMessage(
-        showTranslations
-          ? 'Mostrando traducciones en el editor'
-          : 'Mostrando claves i8n originales'
-      );
     }
   );
 
@@ -73,6 +52,17 @@ function activate(context) {
     'i8nPreview.showSearch',
     () => {
       dictionaryViewProvider.showSearchBox();
+    }
+  );
+
+  // Register command to open a dictionary file at a specific line
+  let openDictionaryAtKeyCommand = vscode.commands.registerCommand(
+    'i8nPreview.openDictionaryAtKey',
+    async (filePath, lineNum) => {
+      const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(filePath));
+      await vscode.window.showTextDocument(doc, {
+        selection: new vscode.Range(lineNum, 0, lineNum, 1000)
+      });
     }
   );
 
@@ -132,21 +122,6 @@ function activate(context) {
     light: vscode.Uri.file(path.join(context.extensionPath, 'resources', 'light', 'translate.svg'))
   };
 
-  // Create decoration type for i8n strings
-  const i8nDecorationType = vscode.window.createTextEditorDecorationType({
-    backgroundColor: 'rgba(150, 200, 255, 0.1)',
-    border: '1px dashed rgb(100, 150, 255)',
-    borderRadius: '3px'
-  });
-
-  // Create decoration type for missing i8n strings
-  const missingI8nDecorationType = vscode.window.createTextEditorDecorationType({
-    backgroundColor: 'rgba(255, 100, 100, 0.1)',
-    border: '1px dashed rgb(255, 100, 100)',
-    textDecoration: 'underline wavy rgb(255, 100, 100)',
-    borderRadius: '3px'
-  });
-
   // Create decoration type for replacement text
   const replacementDecorationType = vscode.window.createTextEditorDecorationType({
     before: {
@@ -164,14 +139,60 @@ function activate(context) {
   const hoverProvider = vscode.languages.registerHoverProvider(
     ['javascript', 'javascriptreact', 'typescript', 'typescriptreact'],
     {
-      provideHover(document, position, token) {
-        if (!currentDictionary) {
-          return
-          return new vscode.Hover('No hay diccionario seleccionado. Usa el comando "i8n: Seleccionar Diccionario".');
-        }
+      provideHover(document, position) {
+        if (!currentDictionary) return;
 
-        const range = document.getWordRangeAtPosition(position);
-        if (!range) return;
+        const lineText = document.lineAt(position.line).text;
+        const i8nRegex = /__\(['"]([^'"]+)['"]\)/g;
+        let match;
+
+        while ((match = i8nRegex.exec(lineText)) !== null) {
+          const start = match.index;
+          const end = match.index + match[0].length;
+
+          if (position.character >= start && position.character <= end) {
+            const key = match[1];
+            const markdown = new vscode.MarkdownString('', true);
+            markdown.isTrusted = true;
+            markdown.supportThemeIcons = true;
+
+            markdown.appendMarkdown(`**\`${key}\`**\n\n`);
+
+            const langs = Object.entries(allDictionaries);
+            if (langs.length === 0) {
+              // fallback if allDictionaries not loaded yet
+              const translation = currentDictionary[key] || '*(missing)*';
+              markdown.appendMarkdown(`**${dictionaryLanguage.toUpperCase()}**: ${translation}\n\n`);
+            } else {
+              for (const [lang, { path: dictPath, data }] of langs) {
+                const translation = data[key];
+                const isCurrent = lang === dictionaryLanguage;
+                const langLabel = isCurrent ? `**${lang.toUpperCase()}**` : lang.toUpperCase();
+                if (translation) {
+                  const lineNum = findKeyLineInFile(dictPath, key);
+                  const args = encodeURIComponent(JSON.stringify([dictPath, lineNum]));
+                  markdown.appendMarkdown(
+                    `${langLabel}: "${translation}" &nbsp;[$(edit)](command:i8nPreview.openDictionaryAtKey?${args} "Edit in ${lang}")\n\n`
+                  );
+                } else {
+                  markdown.appendMarkdown(`${langLabel}: *(missing)*\n\n`);
+                }
+              }
+            }
+
+            return new vscode.Hover(markdown);
+          }
+        }
+      }
+    }
+  );
+
+  // Register Go to Definition provider for i8n strings
+  const definitionProvider = vscode.languages.registerDefinitionProvider(
+    ['javascript', 'javascriptreact', 'typescript', 'typescriptreact'],
+    {
+      async provideDefinition(document, position) {
+        if (!currentDictionary || !currentDictionaryPath) return;
 
         const line = document.lineAt(position.line).text;
         const i8nRegex = /__\(['"]([^'"]+)['"]\)/g;
@@ -183,13 +204,43 @@ function activate(context) {
 
           if (position.character >= start && position.character <= end) {
             const key = match[1];
-            const translation = currentDictionary[key] || 'TRADUCCIÓN FALTANTE';
+            const dictionaryFolder = path.dirname(currentDictionaryPath);
 
-            const markdown = new vscode.MarkdownString();
-            markdown.appendCodeblock(`${key} → "${translation}"`, 'javascript');
-            markdown.appendMarkdown(`\n\nDiccionario: ${dictionaryLanguage}`);
+            let jsFiles;
+            try {
+              jsFiles = fs.readdirSync(dictionaryFolder)
+                .filter(f => f.endsWith('.js'))
+                .map(f => path.join(dictionaryFolder, f));
+            } catch {
+              return;
+            }
 
-            return new vscode.Hover(markdown);
+            const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const keyDefRegex = new RegExp(`(['"]?)${escapedKey}\\1\\s*:`, 'g');
+            const locations = [];
+
+            for (const jsFile of jsFiles) {
+              let content;
+              try {
+                content = fs.readFileSync(jsFile, 'utf8');
+              } catch {
+                continue;
+              }
+
+              let keyMatch;
+              while ((keyMatch = keyDefRegex.exec(content)) !== null) {
+                const before = content.substring(0, keyMatch.index);
+                const lineNum = before.split('\n').length - 1;
+                const colNum = before.length - before.lastIndexOf('\n') - 1;
+                locations.push(new vscode.Location(
+                  vscode.Uri.file(jsFile),
+                  new vscode.Position(lineNum, colNum)
+                ));
+              }
+              keyDefRegex.lastIndex = 0;
+            }
+
+            return locations;
           }
         }
       }
@@ -208,8 +259,6 @@ function activate(context) {
     const text = activeEditor.document.getText();
     const i8nRegex = /__\(['"]([^'"]+)['"]\)/g;
 
-    const i8nDecorations = [];
-    const missingI8nDecorations = [];
     const replacementDecorations = [];
 
     let match;
@@ -222,50 +271,19 @@ function activate(context) {
       const hasTranslation = !!currentDictionary[key];
       const translation = currentDictionary[key] || 'FALTA TRADUCCIÓN';
 
-      if (showTranslations) {
-        // When showing translations, replace the entire i8n call with just the translation
-        replacementDecorations.push({
-          range: range,
-          renderOptions: {
-            before: {
-              contentText: `"${translation}"`,
-              backgroundColor: hasTranslation ? 'rgba(150, 200, 255, 0.1)' : 'rgba(255, 100, 100, 0.1)',
-              border: hasTranslation ? '1px solid rgb(100, 150, 255)' : '1px solid rgb(255, 100, 100)',
-            }
+      replacementDecorations.push({
+        range: range,
+        renderOptions: {
+          before: {
+            contentText: `"${translation}"`,
+            backgroundColor: hasTranslation ? 'rgba(150, 200, 255, 0.1)' : 'rgba(255, 100, 100, 0.1)',
+            border: hasTranslation ? '1px solid rgb(100, 150, 255)' : '1px solid rgb(255, 100, 100)',
           }
-        });
-      } else {
-        // In normal mode, show the i8n call with the translation alongside
-        const decoration = {
-          range: range,
-          hoverMessage: `${key} → "${translation}"`,
-          renderOptions: {
-            after: {
-              contentText: ` → "${translation}"`,
-              color: hasTranslation ? 'rgba(0, 100, 255, 0.6)' : 'rgba(255, 50, 50, 0.8)',
-              fontStyle: 'italic'
-            }
-          }
-        };
-
-        if (hasTranslation) {
-          i8nDecorations.push(decoration);
-        } else {
-          missingI8nDecorations.push(decoration);
         }
-      }
+      });
     }
 
-    // Apply the appropriate decorations based on the current mode
-    if (showTranslations) {
-      activeEditor.setDecorations(replacementDecorationType, replacementDecorations);
-      activeEditor.setDecorations(i8nDecorationType, []);
-      activeEditor.setDecorations(missingI8nDecorationType, []);
-    } else {
-      activeEditor.setDecorations(replacementDecorationType, []);
-      activeEditor.setDecorations(i8nDecorationType, i8nDecorations);
-      activeEditor.setDecorations(missingI8nDecorationType, missingI8nDecorations);
-    }
+    activeEditor.setDecorations(replacementDecorationType, replacementDecorations);
   };
 
   // Dictionary sidebar view provider
@@ -451,10 +469,6 @@ function activate(context) {
   const dictionaryStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   dictionaryStatusBarItem.command = 'i8nPreview.selectDictionary';
 
-  // Register status bar item for toggling translations
-  const toggleStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 101);
-  toggleStatusBarItem.command = 'i8nPreview.toggleTranslations';
-
   // Register status bar item for toggling dictionary sidebar
   const toggleDictionarySidebarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 102);
   toggleDictionarySidebarItem.text = '$(eye) Diccionario';
@@ -468,14 +482,6 @@ function activate(context) {
       dictionaryStatusBarItem.tooltip = 'Clic para cambiar diccionario';
       dictionaryStatusBarItem.show();
 
-      toggleStatusBarItem.text = showTranslations ?
-        `$(eye) Mostrando Traducciones` :
-        `$(code) Mostrando Claves`;
-      toggleStatusBarItem.tooltip = showTranslations ?
-        'Clic para mostrar claves i8n originales' :
-        'Clic para mostrar traducciones en el editor';
-      toggleStatusBarItem.show();
-
       toggleDictionarySidebarItem.show();
 
       // Refresh dictionary view when dictionary changes
@@ -484,7 +490,6 @@ function activate(context) {
       dictionaryStatusBarItem.text = '$(warning) i8n: Sin Diccionario';
       dictionaryStatusBarItem.tooltip = 'Clic para seleccionar un diccionario';
       dictionaryStatusBarItem.show();
-      toggleStatusBarItem.hide();
       toggleDictionarySidebarItem.hide();
     }
   }
@@ -494,17 +499,15 @@ function activate(context) {
   // Add updateDecorations reference to outer scope
   context.subscriptions.push(
     selectDictionaryCommand,
-    toggleTranslationsCommand,
+    openDictionaryAtKeyCommand,
     toggleDictionarySidebarCommand,
     searchKeyInEditorCommand,
     handleTreeItemClickCommand,
     showSearchCommand,
     hoverProvider,
-    i8nDecorationType,
-    missingI8nDecorationType,
+    definitionProvider,
     replacementDecorationType,
     dictionaryStatusBarItem,
-    toggleStatusBarItem,
     toggleDictionarySidebarItem,
     dictionaryTreeView
   );
@@ -601,14 +604,6 @@ async function selectDictionaryFile() {
       dictionaryStatusBarItem.tooltip = 'Clic para cambiar diccionario';
       dictionaryStatusBarItem.show();
 
-      toggleStatusBarItem.text = showTranslations ?
-        `$(eye) Mostrando Traducciones` :
-        `$(code) Mostrando Claves`;
-      toggleStatusBarItem.tooltip = showTranslations ?
-        'Clic para mostrar claves i8n originales' :
-        'Clic para mostrar traducciones en el editor';
-      toggleStatusBarItem.show();
-
       toggleDictionarySidebarItem.show();
     }
   }
@@ -619,6 +614,7 @@ async function selectDictionaryFile() {
  * @param {string} filePath Path to the dictionary file
  */
 function loadDictionary(filePath) {
+  currentDictionaryPath = filePath;
   try {
     // Leer el contenido completo del archivo
     const fileContent = fs.readFileSync(filePath, 'utf8');
@@ -685,6 +681,7 @@ function loadDictionary(filePath) {
         dictionaryViewProvider.refresh();
       }
 
+      loadAllDictionaries();
       return true;
     } catch (requireError) {
       console.error(`Error usando require(): ${requireError.message}`);
@@ -722,6 +719,7 @@ function loadDictionary(filePath) {
             dictionaryViewProvider.refresh();
           }
 
+          loadAllDictionaries();
           return true;
         } else {
           console.error('No se pudo extraer el objeto del diccionario');
@@ -738,6 +736,75 @@ function loadDictionary(filePath) {
   }
 
   return false;
+}
+
+/**
+ * Extract dictionary data from a file without side effects.
+ * Returns the dictionary object or null on failure.
+ * @param {string} filePath
+ */
+function extractDictionaryData(filePath) {
+  try {
+    const fileContent = fs.readFileSync(filePath, 'utf8');
+    const tempFile = path.join(path.dirname(filePath), `._temp_${Date.now()}_${Math.random().toString(36).slice(2)}.js`);
+    try {
+      fs.writeFileSync(tempFile, fileContent);
+      delete require.cache[require.resolve(tempFile)];
+      const mod = require(tempFile);
+      const data = mod.default || mod;
+      setTimeout(() => { try { fs.unlinkSync(tempFile); } catch { } }, 2000);
+      return data;
+    } catch {
+      try { fs.unlinkSync(tempFile); } catch { }
+      const match = fileContent.match(/(const\s+\w+\s*=\s*)({[\s\S]*?})(;\s*(export|module))/m);
+      if (match && match[2]) {
+        return Function('"use strict"; return (' + match[2] + ')')();
+      }
+    }
+  } catch { }
+  return null;
+}
+
+/**
+ * Load all .js files from the same folder as the current dictionary into allDictionaries.
+ */
+function loadAllDictionaries() {
+  if (!currentDictionaryPath) return;
+  const folder = path.dirname(currentDictionaryPath);
+  allDictionaries = {};
+  let jsFiles;
+  try {
+    jsFiles = fs.readdirSync(folder).filter(f => f.endsWith('.js') && !f.startsWith('._temp_'));
+  } catch {
+    return;
+  }
+  for (const file of jsFiles) {
+    const lang = path.basename(file, '.js');
+    const filePath = path.join(folder, file);
+    const data = extractDictionaryData(filePath);
+    if (data) {
+      allDictionaries[lang] = { path: filePath, data };
+    }
+  }
+}
+
+/**
+ * Find the 0-based line number of a key definition in a dictionary file.
+ * @param {string} filePath
+ * @param {string} key
+ * @returns {number}
+ */
+function findKeyLineInFile(filePath, key) {
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const lines = content.split('\n');
+    const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const keyRegex = new RegExp(`(['"]?)${escapedKey}\\1\\s*:`);
+    for (let i = 0; i < lines.length; i++) {
+      if (keyRegex.test(lines[i])) return i;
+    }
+  } catch { }
+  return 0;
 }
 
 /**
